@@ -1,0 +1,7 @@
+export enum AuthProviderType {
+  EMAIL_PASSWORD = "EMAIL_PASSWORD",
+  PHONE_OTP ="PHONE_OTP",
+  GOOGLE="GOOGLE",
+  MICROSOFT="MICROSOFT",
+  SAML="SAML"
+}

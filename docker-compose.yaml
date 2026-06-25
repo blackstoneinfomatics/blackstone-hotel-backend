@@ -1,0 +1,21 @@
+version: '3.9'
+
+services:
+  redis:
+    image: redis:8-alpine
+    container_name: blackstonehotel-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - '6381:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - blackstonehotel-network
+
+volumes:
+  redis_data:
+
+networks:
+  blackstonehotel-network:
+    driver: bridge
