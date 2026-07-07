@@ -7,6 +7,8 @@ import {
   HttpException,
   HttpStatus,
   Logger,
+  Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -27,6 +29,8 @@ import { randomUUID } from 'crypto';
 import { RedisService } from '@/infrastructure/redis/redis.service';
 import passport from 'passport';
 import geoip from 'geoip-lite';
+import { ChangePasswordDto } from './dto/ChangePasswordDto.dto';
+import { ResetUserPasswordDto } from './dto/ResetPasswordDto.dto';
 
 @Controller('authentication')
 export class AuthenticationController {
@@ -250,10 +254,11 @@ export class AuthenticationController {
       user.deviceId,
     );
 
-    res.clearCookie('access_token');
-    res.clearCookie('refresh_token');
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
 
     return {
+      success: true,
       message: 'Logged out successfully',
     };
   }
@@ -265,13 +270,50 @@ export class AuthenticationController {
     @CurrentUser() user: JwtVerifyClaims,
     @Res({ passthrough: true }) res: Response,
   ) {
-    await this.authService.revokeAllForUser(user.sub, user.sessionId);
+    await this.authService.revokeAllForUser(user.sub);
 
-    res.clearCookie('access_token');
-    res.clearCookie('refresh_token');
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
 
     return {
+      success: true,
       message: 'Logged out from all devices',
     };
+  }
+
+  @Patch('/v1/change-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, SessionGuard)
+  async changePassword(
+    @CurrentUser() user: JwtVerifyClaims,
+    @Body() body: ChangePasswordDto,
+  ) {
+    await this.authService.changePassword(
+      user.sub,
+      user.sessionId,
+      body.currentPassword,
+      body.newPassword,
+    );
+
+    return{
+      success: true,
+      message: 'Password changed successfully',
+    }
+  }
+
+  @Patch('/v1/:id/reset-password')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, SessionGuard)
+  async resetPassword(
+    @Param('id') id: string,
+    @Body() body: ResetUserPasswordDto,
+    @CurrentUser() user: JwtVerifyClaims,
+  ) {
+    await this.authService.resetPassword(id, body,user);
+
+    return{
+      success: true,
+      message: 'Password reset successfully',
+    }
   }
 }

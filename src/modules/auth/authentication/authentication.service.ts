@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   HttpException,
   Injectable,
@@ -31,6 +32,9 @@ import { GetTokenDto } from './dto/GetToken.dto';
 import { GoogleOAuthLoginDto } from './dto/GoogleLoginServiceLayerDto.dto';
 import { AuthProviderRepository } from './repositories/authprovider.repository';
 import { AuthProviderType } from '@/shared/enums/AuthProviderType.enum';
+import { ResetUserPasswordDto } from './dto/ResetPasswordDto.dto';
+import { UserWithRelations } from '../users/types/UserWithRelations.type';
+import { Status } from '@prisma/client';
 
 @Injectable()
 export class AuthenticationService {
@@ -104,35 +108,44 @@ export class AuthenticationService {
 
       if (!valid) throw new UnauthorizedException('Invalid email or password.');
 
-      const roleIds = user.userRoles.map((ur) => ur.role.id);
-
-      const permissions = [
-        ...new Set(
-          user.userRoles.flatMap((ur) =>
-            ur.role.rolePermissions.map((rp) => rp.permission.code),
-          ),
-        ),
-      ];
-      const tenantKey = user.tenantId ?? 'system';
-      await this.redis.set(
-        RedisKeys.userPermissions(tenantKey, user.id),
-        JSON.stringify(permissions),
-        3600,
-      );
-
-      await this.redis.set(
-        RedisKeys.userRoles(tenantKey, user.id),
-        JSON.stringify(roleIds),
-        3600,
-      );
       const getTokenData = { ...user, data };
 
       return await this.issueTokensAndCreateSession(getTokenData);
     } catch (error: any) {
       this.logger.error(`Failed to fetch permisssions`, error.stack);
-
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new InternalServerErrorException('Unable to fetch permissions');
     }
+  }
+  private getEffectiveUserAccess(user: UserWithRelations) {
+    const activeUserRoles = user.userRoles.filter(
+      (userRole) => !userRole.role.deletedAt && userRole.role.isActive,
+    );
+
+    const roleIds = activeUserRoles.map((userRole) => userRole.role.id);
+
+    const permissions = [
+      ...new Set(
+        activeUserRoles.flatMap((userRole) =>
+          userRole.role.rolePermissions
+            .filter(
+              (rolePermission) =>
+                !rolePermission.permission.deletedAt &&
+                rolePermission.permission.isActive &&
+                !rolePermission.permission.module.deletedAt &&
+                rolePermission.permission.module.status === Status.ACTIVE,
+            )
+            .map((rolePermission) => rolePermission.permission.code),
+        ),
+      ),
+    ];
+
+    return {
+      roleIds,
+      permissions,
+    };
   }
 
   async googleLogin(
@@ -167,27 +180,6 @@ export class AuthenticationService {
       } else if (userAuth!.providerUserId !== data.googleId) {
         throw new UnauthorizedException('Google account mismatch.');
       }
-      const roleIds = user.userRoles.map((ur) => ur.role.id);
-
-      const permissions = [
-        ...new Set(
-          user.userRoles.flatMap((ur) =>
-            ur.role.rolePermissions.map((rp) => rp.permission.code),
-          ),
-        ),
-      ];
-      const tenantKey = user.tenantId ?? 'system';
-      await this.redis.set(
-        RedisKeys.userPermissions(tenantKey, user.id),
-        JSON.stringify(permissions),
-        3600,
-      );
-
-      await this.redis.set(
-        RedisKeys.userRoles(tenantKey, user.id),
-        JSON.stringify(roleIds),
-        3600,
-      );
       const getTokenData = { ...user, data };
 
       return await this.issueTokensAndCreateSession(getTokenData);
@@ -383,7 +375,7 @@ export class AuthenticationService {
     }
 
     if (!storedHash) {
-      await this.revokeAllForUser(userId, sessionId);
+      await this.revokeAllForUser(userId);
       throw new UnauthorizedException(
         'Refresh token invalid or missing — re-login required',
       );
@@ -413,7 +405,7 @@ export class AuthenticationService {
     }
 
     if (storedHash !== incomingHash) {
-      await this.revokeAllForUser(userId, sessionId);
+      await this.revokeAllForUser(userId);
       throw new UnauthorizedException(
         'Refresh token mismatch — re-login required',
       );
@@ -520,8 +512,11 @@ export class AuthenticationService {
       }
 
       return true;
-    } catch (err: any) {
-      this.logger.error(`Failed to revoke tokens: ${err.message}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to revoke tokens: ${error.message}`);
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new InternalServerErrorException('Token revocation failed');
     }
   }
@@ -532,46 +527,257 @@ export class AuthenticationService {
     sessionId: string,
   ) {
     // Strong action: revoke all refresh tokens for user
-    await this.revokeAllForUser(uid, sessionId);
+    await this.revokeAllForUser(uid);
     // Optionally send security email/push, create security incident record
     this.logger.warn(
       `Refresh token reuse detected for uid=${uid}, deviceId=${deviceId}`,
     );
   }
 
-  async revokeAllForUser(uid: string, sessionId: string): Promise<boolean> {
+  async revokeAllForUser(uid: string): Promise<boolean> {
     try {
+      // Revoke all JWTs issued before this timestamp
       const revokeTimestamp = String(Date.now());
+
       await this.redis.set(
         RedisKeys.revokedUser(uid),
         revokeTimestamp,
         60 * 60 * 24 * 365,
       );
 
-      const devices = await this.redis.smembers(RedisKeys.devices(uid));
+      // Get all active session IDs
+      const sessionIds = await this.redis.smembers(RedisKeys.userSessions(uid));
 
       await Promise.all(
-        devices.map(async (deviceId) => {
-          await Promise.all([
-            this.redis.del(RedisKeys.refreshToken(sessionId)),
-            this.redis.del(RedisKeys.accessToken(sessionId)),
-            this.redis.srem(RedisKeys.devices(uid), deviceId),
-            this.redis.del(RedisKeys.session(sessionId)),
-            this.redis.srem(RedisKeys.userSessions(uid), sessionId),
-            this.activeSession.revokeSession(sessionId),
-          ]);
+        sessionIds.map(async (sessionId) => {
+          try {
+            // Get session details
+            const session =
+              (await this.activeSession.getById(sessionId)) ||
+              this.redis
+                .get(RedisKeys.session(sessionId))
+                .then((s) => (s ? JSON.parse(s) : null));
 
-          const updatedSession = await this.activeSession.getById(sessionId);
-          await this.cacheActiveSession(updatedSession);
+            await Promise.all([
+              this.redis.del(RedisKeys.refreshToken(sessionId)),
+              this.redis.del(RedisKeys.accessToken(sessionId)),
+              this.redis.del(RedisKeys.session(sessionId)),
+              this.redis.srem(RedisKeys.userSessions(uid), sessionId),
+
+              session?.deviceId
+                ? this.redis.srem(RedisKeys.devices(uid), session.deviceId)
+                : Promise.resolve(),
+
+              this.activeSession.revokeSession(sessionId),
+            ]);
+          } catch (error: any) {
+            this.logger.error(
+              `Failed to revoke session ${sessionId}: ${error.message}`,
+            );
+          }
         }),
       );
 
+      // Clean up empty sets
+      await Promise.all([
+        this.redis.del(RedisKeys.userSessions(uid)),
+        this.redis.del(RedisKeys.devices(uid)),
+      ]);
+
       return true;
-    } catch (err: any) {
+    } catch (error: any) {
       this.logger.error(
-        `Failed to revoke all sessions for user ${uid}: ${err.message}`,
+        `Failed to revoke all sessions for user ${uid}: ${error.message}`,
+        error.stack,
       );
-      throw new InternalServerErrorException('Complete user revocation failed');
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        'Failed to logout from all devices.',
+      );
+    }
+  }
+  async changePassword(
+    userId: string,
+    sessionId: string,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    try {
+      const user = await this.userService.findUserById(userId);
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+      const userAuth = user.authProviders.find(
+        (auth) => auth.provider === AuthProviderType.EMAIL_PASSWORD,
+      );
+      if (!userAuth?.passwordHash || !userAuth) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      const valid = await argon2.verify(userAuth.passwordHash, currentPassword);
+
+      if (!valid) throw new UnauthorizedException('Invalid Current password.');
+
+      const NewPasswordHash = await argon2.hash(newPassword, {
+        type: argon2.argon2id,
+        memoryCost: 19456,
+        timeCost: 2,
+        parallelism: 1,
+      });
+
+      const updateResult = await this.authProviderRepository.updatePasswordHash(
+        userId,
+        NewPasswordHash,
+      );
+      if (!updateResult) {
+        throw new InternalServerErrorException('Failed to update password');
+      }
+
+      if (user.mustChangePassword) {
+        const updatePasswordDetails =
+          await this.userService.updatePasswordDetailsByUserId(userId, false);
+        if (!updatePasswordDetails) {
+          throw new InternalServerErrorException(
+            'Failed to update password details',
+          );
+        }
+      }
+
+      const session = await this.activeSession.getById(sessionId);
+      if (!session) {
+        throw new NotFoundException('Session not found');
+      }
+
+      const revokeResult = await this.revokeAllForUser(userId);
+      if (!revokeResult) {
+        throw new InternalServerErrorException(
+          'Failed to revoke sessions after password change',
+        );
+      }
+      const data = {
+        deviceId: session.deviceId,
+        platform: session.platform,
+        ipAddress: session.ipAddress,
+        userAgent: session.userAgent,
+        appVersion: session.appVersion,
+        country: session.country,
+      };
+      const getTokenData = { ...user, data };
+      return await this.issueTokensAndCreateSession(getTokenData);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to change password for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to change password.');
+    }
+  }
+
+  async resetPassword(
+    userId: string,
+    dtoData: ResetUserPasswordDto,
+    currentUser: JwtVerifyClaims,
+  ) {
+    try {
+      const targetUser = await this.userService.findUserById(userId);
+      if (!targetUser) {
+        throw new NotFoundException('User not found');
+      }
+      const isSuperAdmin = currentUser.roles.some(
+        (role) => role === 'SUPER_ADMIN',
+      );
+      if (!isSuperAdmin) {
+        if (targetUser.tenantId !== currentUser.tenantId) {
+          throw new ForbiddenException(
+            "You do not have permission to reset this user's password.",
+          );
+        }
+      }
+      // if (currentUser.sub === targetUser.id) {
+      //   throw new BadRequestException(
+      //     'Use Change Password to update your own password.',
+      //   );
+      // }
+
+      const userAuth = targetUser.authProviders.find(
+        (auth) => auth.provider === AuthProviderType.EMAIL_PASSWORD,
+      );
+      if (!userAuth?.passwordHash || !userAuth) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+
+      const samepassword = await argon2.verify(
+        userAuth.passwordHash,
+        dtoData.newPassword,
+      );
+
+      if (samepassword) {
+        throw new BadRequestException(
+          'New password cannot be the same as the current password.',
+        );
+      }
+
+      const NewPasswordHash = await argon2.hash(dtoData.newPassword, {
+        type: argon2.argon2id,
+        memoryCost: 19456,
+        timeCost: 2,
+        parallelism: 1,
+      });
+
+      const updateResult = await this.authProviderRepository.updatePasswordHash(
+        targetUser.id,
+        NewPasswordHash,
+      );
+      if (!updateResult) {
+        throw new InternalServerErrorException('Failed to update password');
+      }
+
+      const updatePasswordDetails =
+        await this.userService.updatePasswordDetailsByUserId(
+          targetUser.id,
+          dtoData.forcePasswordChange ?? true,
+        );
+      if (!updatePasswordDetails) {
+        throw new InternalServerErrorException(
+          'Failed to update password details',
+        );
+      }
+
+      const session = await this.activeSession.getById(currentUser.sessionId);
+      if (!session) {
+        throw new NotFoundException('Session not found');
+      }
+
+      const revokeResult = await this.revokeAllForUser(userId);
+      if (!revokeResult) {
+        throw new InternalServerErrorException(
+          'Failed to revoke sessions after password change',
+        );
+      }
+      const data = {
+        deviceId: session.deviceId,
+        platform: session.platform,
+        ipAddress: session.ipAddress,
+        userAgent: session.userAgent,
+        appVersion: session.appVersion,
+        country: session.country,
+      };
+      const getTokenData = { ...targetUser, data };
+      return await this.issueTokensAndCreateSession(getTokenData);
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to change password for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new InternalServerErrorException('Failed to change password.');
     }
   }
   async cacheActiveSession(data: GetActiveSessionByIdResponse): Promise<void> {
@@ -585,8 +791,11 @@ export class AuthenticationService {
       );
 
       await this.redis.sadd(RedisKeys.userSessions(data.userId), data.id);
-    } catch (err: any) {
-      this.logger.error(`Failed to cache session: ${err.message}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to cache session: ${error.message}`);
+      if (error instanceof HttpException) {
+        throw error;
+      }
     }
   }
 }

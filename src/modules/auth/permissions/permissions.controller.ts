@@ -5,6 +5,7 @@ import { UpdatePermissionDto } from './dto/update-permission.dto';
 import { GetAllPermission } from './dto/getall-permission.dto';
 import { ApiResponse } from '@/shared/interface/api-response.interface';
 import { PermissionResponseDto } from './dto/permission-response.dto';
+import { PermissionModuleGroupDto } from './dto/PermissionModuleGroupDto.dto';
 
 @Controller('permissions/v1')
 export class PermissionsController {
@@ -17,9 +18,10 @@ export class PermissionsController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  findAll(@Query() query : GetAllPermission):Promise<ApiResponse<PermissionResponseDto[]>> {
+  findAll(@Query() query : GetAllPermission):Promise<ApiResponse<PermissionModuleGroupDto[]>> {
     return this.permissionsService.findAll(query);
   }
+  
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)

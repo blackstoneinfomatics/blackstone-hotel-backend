@@ -1,8 +1,16 @@
+import { ModuleScope } from "@prisma/client";
+
 export class PermissionResponseDto {
   id!: string;
 
   code!: string;
-  module!: string;
+
+  module!: {
+    id: string;
+    name: string;
+    code: string;
+    moduleScope: ModuleScope;
+  };
   action!: string;
 
   name!: string;

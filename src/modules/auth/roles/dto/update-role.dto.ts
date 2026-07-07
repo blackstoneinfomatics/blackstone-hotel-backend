@@ -14,11 +14,6 @@ export class UpdateRoleDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(50)
-  code?: string;
-
-  @IsOptional()
-  @IsString()
   @MaxLength(500)
   description?: string;
 

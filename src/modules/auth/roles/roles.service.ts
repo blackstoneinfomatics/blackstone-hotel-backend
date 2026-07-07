@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -8,11 +9,10 @@ import {
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RoleRepository } from './repositories/role.repository';
-import { CreateRoleResponseDto } from './dto/create-role-response.dto';
 import { ApiResponse } from '@/shared/interface/api-response.interface';
 import { RoleResponseDto } from './dto/role-response.dto';
 import { GetAllRolesDto } from './dto/getall-role.dto';
-import { Prisma } from '@prisma/client';
+import { ModuleScope, Prisma } from '@prisma/client';
 import { Status } from '@/shared/enums/status.enum';
 import { AssignPermissionsDto } from './dto/assign-permissions.dto';
 import { RolePermissionRepository } from './repositories/role-permission.repository';
@@ -171,60 +171,98 @@ export class RolesService {
   }
 
   async getRolePermissions(
-    roleId: string,
-  ): Promise<ApiResponse<RolePermissionResponseDto>> {
-    try {
-      const role = await this.rolePermissionRepository.findRoleById(roleId);
+  roleId: string,
+): Promise<ApiResponse<RolePermissionResponseDto>> {
+  try {
+    const role = await this.rolePermissionRepository.findRoleById(roleId);
 
-      if (!role) {
-        throw new NotFoundException('Role not found');
+    if (!role) {
+      throw new NotFoundException('Role not found');
+    }
+
+    const allPermissions =
+      await this.rolePermissionRepository.getAllPermissions();
+
+    const rolePermissions =
+      await this.rolePermissionRepository.getRolePermission(roleId);
+
+    const assignedPermissionIds = new Set(
+      rolePermissions.map((item) => item.permissionId),
+    );
+
+    const moduleMap = new Map<
+      string,
+      {
+        module: {
+          id: string;
+          name: string;
+          code: string;
+          moduleScope: ModuleScope;
+        };
+        permissions: {
+          id: string;
+          code: string;
+          action: string;
+          name: string;
+          description: string | null;
+          isSystem: boolean;
+          isActive: boolean;
+          selected: boolean;
+        }[];
       }
+    >();
 
-      const allPermissions =
-        await this.rolePermissionRepository.getAllPermissions();
+    for (const permission of allPermissions) {
+      const moduleId = permission.module.id;
 
-      const rolePermissions =
-        await this.rolePermissionRepository.getRolePermission(roleId);
-
-      const assignedPermissionIds = new Set(
-        rolePermissions.map((item) => item.permissionId),
-      );
-
-      const moduleMap = new Map();
-
-      for (const permission of allPermissions) {
-        if (!moduleMap.has(permission.module)) {
-          moduleMap.set(permission.module, []);
-        }
-
-        moduleMap.get(permission.module).push({
-          id: permission.id,
-          name: permission.name,
-          code: permission.code,
-          selected: assignedPermissionIds.has(permission.id),
+      if (!moduleMap.has(moduleId)) {
+        moduleMap.set(moduleId, {
+          module: {
+            id: permission.module.id,
+            name: permission.module.name,
+            code: permission.module.code,
+            moduleScope: permission.module.moduleScope,
+          },
+          permissions: [],
         });
       }
 
-      return {
-        success: true,
-        message: 'Role Permission retrieved successfully',
-        data: {
-          roleId: role.id,
-          roleName: role.name,
-          modules: Array.from(moduleMap.entries()).map(
-            ([module, permissions]) => ({
-              module,
-              permissions,
-            }),
-          ),
-        },
-      };
-    } catch (error: any) {
-      this.logger.error(`Failed to fetch roles`, error.stack);
-
-      throw new InternalServerErrorException('Unable to fetch roles');
+      moduleMap.get(moduleId)!.permissions.push({
+        id: permission.id,
+        code: permission.code,
+        action: permission.action,
+        name: permission.name,
+        description: permission.description,
+        isSystem: permission.isSystem,
+        isActive: permission.isActive,
+        selected: assignedPermissionIds.has(permission.id),
+      });
     }
+
+    return {
+      success: true,
+      message: 'Role permissions retrieved successfully.',
+      data: {
+        roleId: role.id,
+        roleName: role.name,
+        modules: Array.from(moduleMap.values()),
+      },
+    };
+  } catch (error: any) {
+    this.logger.error(
+      `Failed to fetch role permissions`,
+      error.stack,
+    );
+
+    if (error instanceof HttpException) {
+      throw error;
+    }
+
+    throw new InternalServerErrorException(
+      'Unable to fetch role permissions',
+    );
   }
+}
 
   async findOne(id: string): Promise<ApiResponse<RoleResponseDto>> {
     try {
@@ -268,10 +306,6 @@ export class RolesService {
       const updatedRole = await this.roleRepository.update(id, {
         ...(updateRoleDto.name && {
           name: updateRoleDto.name.trim(),
-        }),
-
-        ...(updateRoleDto.code && {
-          code: updateRoleDto.code.trim().toUpperCase(),
         }),
 
         ...(updateRoleDto.description !== undefined && {
@@ -335,59 +369,36 @@ export class RolesService {
     }
   }
 
- async updateRolePermissions(
-  roleId: string,
-  dto: UpdateRolePermissionsDto,
-) {
-  try {
-    const role =
-      await this.rolePermissionRepository.findRoleById(
-        roleId,
-      );
+  async updateRolePermissions(roleId: string, dto: UpdateRolePermissionsDto) {
+    try {
+      const role = await this.rolePermissionRepository.findRoleById(roleId);
 
-    if (!role) {
-      throw new NotFoundException(
-        'Role not found',
-      );
-    }
-
-    const addedIds =
-      dto.addedPermissionIds ?? [];
-
-    const removedIds =
-      dto.removedPermissionIds ?? [];
-
-    const allPermissionIds = [
-      ...addedIds,
-      ...removedIds,
-    ];
-
-    if (allPermissionIds.length > 0) {
-      const permissions =
-        await this.rolePermissionRepository.findPermissions(
-          allPermissionIds,
-        );
-
-      if (
-        permissions.length !==
-        allPermissionIds.length
-      ) {
-        throw new BadRequestException(
-          'One or more permissions are invalid',
-        );
+      if (!role) {
+        throw new NotFoundException('Role not found');
       }
-    }
 
-    await this.prisma.$transaction(
-      async (tx) => {
+      const addedIds = dto.addedPermissionIds ?? [];
+
+      const removedIds = dto.removedPermissionIds ?? [];
+
+      const allPermissionIds = [...addedIds, ...removedIds];
+
+      if (allPermissionIds.length > 0) {
+        const permissions =
+          await this.rolePermissionRepository.findPermissions(allPermissionIds);
+
+        if (permissions.length !== allPermissionIds.length) {
+          throw new BadRequestException('One or more permissions are invalid');
+        }
+      }
+
+      await this.prisma.$transaction(async (tx) => {
         if (addedIds.length > 0) {
           await tx.rolePermission.createMany({
-            data: addedIds.map(
-              (permissionId) => ({
-                roleId,
-                permissionId,
-              }),
-            ),
+            data: addedIds.map((permissionId) => ({
+              roleId,
+              permissionId,
+            })),
             skipDuplicates: true,
           });
         }
@@ -402,30 +413,28 @@ export class RolesService {
             },
           });
         }
-      },
-    );
+      });
 
-    return {
-      success: true,
-      message:
-        'Role permissions updated successfully',
-    };
-  } catch (error: any) {
-    this.logger.error(
-      `Failed to update permissions for role ${roleId}`,
-      error.stack,
-    );
+      return {
+        success: true,
+        message: 'Role permissions updated successfully',
+      };
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to update permissions for role ${roleId}`,
+        error.stack,
+      );
 
-    if (
-      error instanceof NotFoundException ||
-      error instanceof BadRequestException
-    ) {
-      throw error;
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException(
+        'Failed to update role permissions',
+      );
     }
-
-    throw new InternalServerErrorException(
-      'Failed to update role permissions',
-    );
   }
-}
 }

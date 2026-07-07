@@ -9,9 +9,10 @@ import { RedisModule } from '@/infrastructure/redis/redis.module';
 import { JwtAuthGuard } from './authentication/guards/jwt-auth.guard';
 import { SessionGuard } from './authentication/guards/session.guard';
 import { PassportModule } from '@nestjs/passport';
+import { ModuleModule } from './module/module.module';
 
 @Module({
   imports: [
-    UsersModule, RolesModule, PermissionsModule, AuthenticationModule, SessionModule, JwtModule,RedisModule],
+    UsersModule, RolesModule, PermissionsModule, AuthenticationModule, SessionModule, JwtModule,RedisModule, ModuleModule],
 })
 export class AuthModule {}

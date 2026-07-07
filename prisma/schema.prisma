@@ -18,6 +18,7 @@ model Role {
   deletedAt       DateTime?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+  roleType        RoleType         @default(PLATFORM)
   rolePermissions RolePermission[]
   userRoles       UserRole[]
 
@@ -30,7 +31,6 @@ model Role {
 model Permission {
   id              String           @id @default(uuid())
   code            String           @unique
-  module          String
   action          String
   name            String
   description     String?
@@ -39,9 +39,11 @@ model Permission {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   deletedAt       DateTime?
+  moduleId        String
+  module          Module           @relation(fields: [moduleId], references: [id])
   rolePermissions RolePermission[]
 
-  @@index([module])
+  @@index([moduleId])
   @@index([code])
   @@map("permissions")
 }
@@ -60,27 +62,29 @@ model RolePermission {
 }
 
 model User {
-  id              String          @id @default(uuid())
-  tenantId        String?
-  employeeCode    String?
-  firstName       String
-  lastName        String?
-  displayName     String?
-  email           String
-  phoneNumber     String?
-  avatarUrl       String?
-  designation     String?
-  department      String?
-  status          UserStatus      @default(ACTIVE)
-  isEmailVerified Boolean         @default(false)
-  isPhoneVerified Boolean         @default(false)
-  lastLoginAt     DateTime?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-  deletedAt       DateTime?
-  activeSessions  ActiveSession[]
-  authProviders   AuthProvider[]
-  userRoles       UserRole[]
+  id                 String          @id @default(uuid())
+  tenantId           String?
+  employeeCode       String?
+  firstName          String
+  lastName           String?
+  displayName        String?
+  email              String
+  phoneNumber        String?
+  avatarUrl          String?
+  designation        String?
+  department         String?
+  status             UserStatus      @default(ACTIVE)
+  isEmailVerified    Boolean         @default(false)
+  isPhoneVerified    Boolean         @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  deletedAt          DateTime?
+  mustChangePassword Boolean         @default(false)
+  passwordChangedAt  DateTime?
+  activeSessions     ActiveSession[]
+  authProviders      AuthProvider[]
+  userRoles          UserRole[]
 
   @@unique([tenantId, email])
   @@unique([tenantId, employeeCode])
@@ -162,11 +166,51 @@ model ActiveSession {
   @@map("active_sessions")
 }
 
+model Module {
+  id           String       @id @default(uuid())
+  name         String
+  code         String       @unique
+  description  String?
+  route        String?
+  icon         String?
+  displayOrder Int          @default(0)
+  parentId     String?
+  moduleScope  ModuleScope  @default(BOTH)
+  isVisible    Boolean      @default(true)
+  isSystem     Boolean      @default(false)
+  status       Status       @default(ACTIVE)
+  createdBy    String?
+  updatedBy    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  deletedAt    DateTime?
+  parent       Module?      @relation("ModuleHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Module[]     @relation("ModuleHierarchy")
+  permissions  Permission[]
+
+  @@index([parentId])
+  @@index([moduleScope])
+  @@index([status])
+  @@index([displayOrder])
+  @@index([deletedAt])
+  @@map("modules")
+}
+
+enum RoleType {
+  PLATFORM
+  TENANT
+}
+
 enum UserStatus {
   ACTIVE
   INACTIVE
   SUSPENDED
   LOCKED
+}
+
+enum Status {
+  ACTIVE
+  INACTIVE
 }
 
 enum AuthProviderType {
@@ -175,4 +219,10 @@ enum AuthProviderType {
   GOOGLE
   MICROSOFT
   SAML
+}
+
+enum ModuleScope {
+  SUPER_ADMIN
+  TENANT
+  BOTH
 }

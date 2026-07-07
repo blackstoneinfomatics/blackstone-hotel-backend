@@ -27,7 +27,7 @@ export class GetAllPermission {
 
   @IsOptional()
   @IsString()
-  module?: string;
+  moduleId?: string;
 
   @IsOptional()
   @IsBooleanString()

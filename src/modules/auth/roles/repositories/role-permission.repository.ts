@@ -1,5 +1,7 @@
 import { PrismaService } from '@/infrastructure/database/prisma/prisma.service';
 import { Injectable } from '@nestjs/common';
+import { permissionInclude } from '../../permissions/types/permission.types';
+import { Status } from '@prisma/client';
 
 @Injectable()
 export class RolePermissionRepository {
@@ -21,6 +23,11 @@ export class RolePermissionRepository {
           in: permissionIds,
         },
         deletedAt: null,
+        isActive: true,
+        module: {
+          deletedAt: null,
+          status: Status.ACTIVE,
+        },
       },
     });
   }
@@ -35,38 +42,46 @@ export class RolePermissionRepository {
     });
   }
 
-  async deleteRolePermissions(roleId:string){
+  async deleteRolePermissions(roleId: string) {
     return this.prisma.rolePermission.deleteMany({
-        where:{
-            roleId
-        }
+      where: {
+        roleId,
+      },
     });
   }
 
-   async getAllPermissions() {
+  async getAllPermissions() {
     return this.prisma.permission.findMany({
       where: {
         deletedAt: null,
+        isActive: true,
+        module: {
+          deletedAt: null,
+          status: Status.ACTIVE,
+        },
       },
       orderBy: [
         {
-          module: 'asc',
+          module: {
+            name: 'asc',
+          },
         },
         {
           name: 'asc',
         },
       ],
+      include: permissionInclude,
     });
   }
 
-  async getRolePermission(roleId:string){
+  async getRolePermission(roleId: string) {
     return this.prisma.rolePermission.findMany({
-        where:{
-             roleId
-        },
-        select:{
-            permissionId :true
-        }
+      where: {
+        roleId,
+      },
+      select: {
+        permissionId: true,
+      },
     });
   }
 }

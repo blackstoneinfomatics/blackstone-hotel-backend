@@ -1,17 +1,38 @@
-export class PermissionItemDto {
+import { ModuleScope } from '@prisma/client';
+
+export class RolePermissionItemResponseDto {
   id!: string;
-  name!: string;
+
   code!: string;
+
+  action!: string;
+
+  name!: string;
+
+  description?: string | null;
+
+  isSystem!: boolean;
+
+  isActive!: boolean;
+
   selected!: boolean;
 }
 
-export class PermissionModuleDto {
-  module!: string;
-  permissions!: PermissionItemDto[];
+export class RolePermissionModuleResponseDto {
+  module!: {
+    id: string;
+    name: string;
+    code: string;
+    moduleScope: ModuleScope;
+  };
+
+  permissions!: RolePermissionItemResponseDto[];
 }
 
 export class RolePermissionResponseDto {
   roleId!: string;
+
   roleName!: string;
-  modules!: PermissionModuleDto[];
+
+  modules!: RolePermissionModuleResponseDto[];
 }
