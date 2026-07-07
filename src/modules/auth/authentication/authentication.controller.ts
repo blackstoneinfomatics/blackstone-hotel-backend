@@ -20,7 +20,7 @@ import type { Request, Response } from 'express';
 import { EmailPasswordLoginServiceDto } from './dto/EmailPasswordLoginServiceDto.dto';
 import { AuthenticationService } from './authentication.service';
 import { RefreshTokenRequestDto } from './dto/RefreshTokenRequestDto.dto';
-import { CurrentUser } from './decorators/current-user.decorator';
+import { CurrentUser } from '../../../shared/decorators/current-user.decorator';
 import type { JwtVerifyClaims } from '../jwt/interfaces/jwtclaims.interface';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SessionGuard } from './guards/session.guard';
@@ -177,7 +177,9 @@ export class AuthenticationController {
             maxAge: 7 * 24 * 60 * 60 * 1000,
           });
 
-          return res.redirect(`${process.env.FRONTEND_URL}/login?success=Login Successfully`);
+          return res.redirect(
+            `${process.env.FRONTEND_URL}/login?success=Login Successfully`,
+          );
         } catch (error: any) {
           if (res.headersSent) {
             return;
@@ -295,10 +297,10 @@ export class AuthenticationController {
       body.newPassword,
     );
 
-    return{
+    return {
       success: true,
       message: 'Password changed successfully',
-    }
+    };
   }
 
   @Patch('/v1/:id/reset-password')
@@ -309,11 +311,11 @@ export class AuthenticationController {
     @Body() body: ResetUserPasswordDto,
     @CurrentUser() user: JwtVerifyClaims,
   ) {
-    await this.authService.resetPassword(id, body,user);
+    await this.authService.resetPassword(id, body, user);
 
-    return{
+    return {
       success: true,
       message: 'Password reset successfully',
-    }
+    };
   }
 }

@@ -10,6 +10,7 @@ import {
   HttpCode,
   Query,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
 import { ModuleService } from './module.service';
 import { CreateModuleDto } from './dto/CreateModule.dto';
@@ -17,6 +18,10 @@ import { UpdateModuleDto } from './dto/UpdateModule.dto';
 import { GetModulesDto } from './dto/GetModules.dto';
 import { UpdateModuleStatusDto } from './dto/UpdateModuleStatusDto.dto';
 import { GetModuleTreeDto } from './dto/GetModuleTreeDto.dto';
+import { JwtAuthGuard } from '../authentication/guards/jwt-auth.guard';
+import { SessionGuard } from '../authentication/guards/session.guard';
+import { PermissionGuard } from '../authorization/guards/permission.guard';
+import { Permission } from '@/shared/decorators/permissions.decorator';
 
 @Controller('module')
 export class ModuleController {
@@ -35,6 +40,8 @@ export class ModuleController {
   }
   
   @Get('/v1/tree')
+  @UseGuards(JwtAuthGuard,SessionGuard,PermissionGuard)
+  @Permission('user.list')
   @HttpCode(HttpStatus.OK)
   async getTree(@Query() query :GetModuleTreeDto) {
     return this.moduleService.getTree(query);

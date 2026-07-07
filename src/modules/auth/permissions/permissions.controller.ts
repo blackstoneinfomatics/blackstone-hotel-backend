@@ -1,7 +1,18 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, HttpCode, HttpStatus, Query, ParseUUIDPipe } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+  HttpCode,
+  HttpStatus,
+  Query,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { PermissionsService } from './permissions.service';
 import { CreatePermissionDto } from './dto/create-permission.dto';
-import { UpdatePermissionDto } from './dto/update-permission.dto';
 import { GetAllPermission } from './dto/getall-permission.dto';
 import { ApiResponse } from '@/shared/interface/api-response.interface';
 import { PermissionResponseDto } from './dto/permission-response.dto';
@@ -18,23 +29,28 @@ export class PermissionsController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  findAll(@Query() query : GetAllPermission):Promise<ApiResponse<PermissionModuleGroupDto[]>> {
+  findAll(
+    @Query() query: GetAllPermission,
+  ): Promise<ApiResponse<PermissionModuleGroupDto[]>> {
     return this.permissionsService.findAll(query);
   }
-  
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  findOne(@Param('id' , ParseUUIDPipe) id: string) :Promise<ApiResponse<PermissionResponseDto>> {
+  findOne(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<ApiResponse<PermissionResponseDto>> {
     return this.permissionsService.findOne(id);
   }
 
+
+
   @Patch(':id/deactivate')
   @HttpCode(HttpStatus.OK)
-  update(@Param('id',ParseUUIDPipe) id: string) {
+  update(@Param('id', ParseUUIDPipe) id: string) {
     return this.permissionsService.deactivate(id);
   }
-  
+
   @Delete(':id')
   remove(@Param('id') id: string) {
     return this.permissionsService.remove(+id);
